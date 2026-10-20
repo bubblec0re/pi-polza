@@ -50,11 +50,20 @@ export function resolveColumns(
 }
 
 /**
- * Prefix `text` with the spaces that push it to the right edge.
- * Returns the text unchanged when it already fills the line (never truncates: Pi does that).
+ * Lay out `left` at the start of the line and `right` at the end of it.
+ *
+ * The gap between them is built from PAD_UNIT (see above), so balance/spend stay left-aligned while
+ * the price sits on the right edge — the same visual result as Pi's own stats line.
+ * When there is not enough room the parts stay adjacent (one space): Pi truncates the line anyway,
+ * and dropping the gap is better than pushing the right part out of view.
  */
-export function padStatusForRightAlign(text: string, columns: number, measure: WidthMeasure): string {
-  if (!Number.isFinite(columns) || columns <= 0) return text;
-  const pad = Math.floor(columns) - RIGHT_ALIGN_RESERVE - measure(text);
-  return pad > 0 ? `${PAD_UNIT.repeat(pad)}${text}` : text;
+export function splitStatusLine(
+  left: string,
+  right: string,
+  columns: number,
+  measure: WidthMeasure,
+): string {
+  if (!Number.isFinite(columns) || columns <= 0) return `${left} ${right}`;
+  const gap = Math.floor(columns) - RIGHT_ALIGN_RESERVE - measure(left) - measure(right);
+  return gap > 0 ? `${left}${PAD_UNIT.repeat(gap)}${right}` : `${left} ${right}`;
 }

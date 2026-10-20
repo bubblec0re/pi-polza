@@ -12,7 +12,7 @@
 import { createProvider, type Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { PolzaCostAccumulator, recordsFromEntries } from "./accounting.ts";
-import { padStatusForRightAlign, resolveColumns, type WidthMeasure } from "./align.ts";
+import { resolveColumns, type WidthMeasure } from "./align.ts";
 import { polzaApiKeyAuth } from "./auth.ts";
 import { fetchBalance } from "./balance.ts";
 import { registerPolzaCommands } from "./commands.ts";
@@ -23,7 +23,13 @@ import { createSubagentsBridge } from "./integrations/subagents.ts";
 import { fetchModelPrice, priceFromRegistry } from "./model-price.ts";
 import { buildPolzaCatalog, POLZA_PROVIDER_ID, toPiModels, type CatalogBuildResult, type OpenRouterMode } from "./provider.ts";
 import type { ResolvedModel } from "./metadata/types.ts";
-import { PolzaStatusController, POLZA_STATUS_KEY, renderPolzaStatus, type PolzaStatusModel } from "./status.ts";
+import {
+  PolzaStatusController,
+  POLZA_STATUS_KEY,
+  renderPolzaStatus,
+  type PolzaStatusModel,
+  type StatusLayout,
+} from "./status.ts";
 import { createPolzaApiStreams } from "./stream.ts";
 
 /**
@@ -60,13 +66,17 @@ export default async function piPolza(pi: ExtensionAPI): Promise<void> {
       // Keep the plain fallback; alignment stays approximately correct.
     });
 
-  // Persistent footer: `Polza <balance> ₽ | Spent <cost> ₽ | (X in / Y out ₽/1M)`, native status bar.
-  const alignStatus = (text: string): string => {
-    if (STATUS_ALIGNMENT !== "right") return text;
+  /**
+   * Persistent footer, rendered by Pi's native status bar: `Polza <balance> ₽ | Spent <cost> ₽` on the
+   * left, the selected model's catalog price on the right edge. Both halves are one status string, so
+   * the gap between them is what places the price — see align.ts.
+   */
+  const statusLayout = (): StatusLayout | undefined => {
+    if (STATUS_ALIGNMENT !== "right") return undefined;
     try {
-      return padStatusForRightAlign(text, resolveColumns(process.stdout, process.env), measureWidth);
+      return { columns: resolveColumns(process.stdout, process.env), measure: measureWidth };
     } catch {
-      return text;
+      return undefined;
     }
   };
 
@@ -78,7 +88,7 @@ export default async function piPolza(pi: ExtensionAPI): Promise<void> {
           ctx?.ui.setStatus(POLZA_STATUS_KEY, undefined);
           return;
         }
-        ctx.ui.setStatus(POLZA_STATUS_KEY, alignStatus(renderPolzaStatus(ctx.ui.theme, model)));
+        ctx.ui.setStatus(POLZA_STATUS_KEY, renderPolzaStatus(ctx.ui.theme, model, statusLayout()));
       } catch {
         // Status bar is best-effort; never break the runtime.
       }

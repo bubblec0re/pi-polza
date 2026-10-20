@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PolzaBalance } from "../.pi/extensions/pi-polza/balance.ts";
 import type { ModelPrice } from "../.pi/extensions/pi-polza/model-price.ts";
+import { PAD_UNIT, RIGHT_ALIGN_RESERVE } from "../.pi/extensions/pi-polza/align.ts";
 import {
   PLAIN_STATUS_THEME,
   PRICE_RETRY_MS,
@@ -273,4 +274,20 @@ test("price disappears when the provider is not Polza", async () => {
   // index.ts calls deactivate() for a non-Polza provider, which clears the line entirely.
   h.controller.deactivate();
   assert.equal(h.last(), undefined);
+});
+
+const cells = (text: string): number => text.split(PAD_UNIT).join(" ").length;
+
+test("with a layout the account stays left and the price moves to the right edge", () => {
+  const model = polzaStatusModel(snap(43.54, "fresh"), { requests: 2, costRub: 0.61 }, priceSnap(11.7434, 58.717));
+  const line = renderPolzaStatus(PLAIN_STATUS_THEME, model, { columns: 120, measure: (text) => text.length });
+  assert.ok(line.startsWith("Polza 43.54 ₽ | Spent 0.61 ₽"), "balance and spend keep the left edge");
+  assert.ok(line.endsWith("(11.74 in / 58.72 out ₽/1M)"), "price ends the line");
+  assert.equal(cells(line), 120 - RIGHT_ALIGN_RESERVE);
+  assert.ok(line.includes(PAD_UNIT), "the two halves are separated by a gap, not by a space run");
+});
+
+test("without a layout (plain callers, tests) the halves keep the pipe separator", () => {
+  const model = polzaStatusModel(snap(43.54, "fresh"), { requests: 2, costRub: 0.61 }, priceSnap(11.7434, 58.717));
+  assert.equal(renderPolzaStatus(PLAIN_STATUS_THEME, model), "Polza 43.54 ₽ | Spent 0.61 ₽ | (11.74 in / 58.72 out ₽/1M)");
 });

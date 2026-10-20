@@ -7,6 +7,7 @@
  * The three are independent: a failing endpoint never hides the other values.
  */
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import { splitStatusLine, type WidthMeasure } from "./align.ts";
 import type { PolzaBalance } from "./balance.ts";
 import type { ModelPrice } from "./model-price.ts";
 
@@ -147,7 +148,19 @@ export const PLAIN_STATUS_THEME: StatusTheme = {
  * Unavailable balance and the stale marker use warning, never the whole line.
  * The `partial` marker is deliberately faint: it qualifies the number without competing with it.
  */
-export function renderPolzaStatus(theme: StatusTheme, model: PolzaStatusModel): string {
+/** How to place the two halves of the line. Without it the halves are simply joined by ` | `. */
+export interface StatusLayout {
+  /** Usable width of the status line (terminal columns). */
+  columns: number;
+  /** ANSI-aware width measurement (`visibleWidth` in the runtime, plain length in tests). */
+  measure: WidthMeasure;
+}
+
+/**
+ * Left half: `Polza <balance> ₽ | Spent <cost> ₽`. Account state and what this session actually cost —
+ * the numbers that must stay readable at a glance.
+ */
+export function renderStatusAccount(theme: StatusTheme, model: PolzaStatusModel): string {
   const balanceValue =
     model.balanceState === "unavailable" ? theme.fg("warning", model.balance) : theme.fg("text", model.balance);
   return [
@@ -160,17 +173,32 @@ export function renderPolzaStatus(theme: StatusTheme, model: PolzaStatusModel): 
     " ",
     theme.fg("text", model.session),
     ...(model.partial ? [" ", theme.fg("dim", "partial")] : []),
-    ...(model.price
-      ? [
-          theme.fg("dim", " | "),
-          theme.fg("muted", "("),
-          theme.fg("text", model.price.input),
-          theme.fg("muted", " in / "),
-          theme.fg("text", model.price.output),
-          theme.fg("muted", " out ₽/1M)"),
-        ]
-      : []),
   ].join("");
+}
+
+/** Right half: `(11.74 in / 58.72 out ₽/1M)`, or null when the price is unknown. */
+export function renderStatusPrice(theme: StatusTheme, model: PolzaStatusModel): string | null {
+  if (!model.price) return null;
+  return [
+    theme.fg("muted", "("),
+    theme.fg("text", model.price.input),
+    theme.fg("muted", " in / "),
+    theme.fg("text", model.price.output),
+    theme.fg("muted", " out ₽/1M)"),
+  ].join("");
+}
+
+/**
+ * One status string: account and spend on the left, the model's catalog price on the right edge.
+ * With a layout the halves are separated by a gap that survives Pi's status sanitizer; without one
+ * (tests, plain-text callers) they are joined by ` | `.
+ */
+export function renderPolzaStatus(theme: StatusTheme, model: PolzaStatusModel, layout?: StatusLayout): string {
+  const left = renderStatusAccount(theme, model);
+  const price = renderStatusPrice(theme, model);
+  if (!price) return left;
+  if (layout) return splitStatusLine(left, price, layout.columns, layout.measure);
+  return `${left}${theme.fg("dim", " | ")}${price}`;
 }
 
 export interface StatusControllerDeps {

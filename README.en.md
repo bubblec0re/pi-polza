@@ -173,8 +173,8 @@ users or peers, even when they share the same Polza account; external API client
 outside `pi-polza`. Foreign spend is never converted to RUB and **never shown as `0 ₽`** — it is
 simply excluded from the report.
 
-**Where to look.** Pi's footer (`Polza <balance> ₽ | Spent <cost> ₽ | (X in / Y out ₽/1M)`) and
-`/polza-cost`.
+**Where to look.** Pi's footer (`Polza <balance> ₽ | Spent <cost> ₽` on the left, `(X in / Y out ₽/1M)`
+on the right) and `/polza-cost`.
 `/polza-balance` shows the **whole account wallet**, not session cost: the balance also moves
 because of other sessions and applications, so its delta is not a measure of one run.
 
@@ -196,10 +196,11 @@ The right-hand side of the footer shows the model's reference price from the Pol
 number the website shows — in RUB per million tokens:
 
 ```text
-Polza 43.54 ₽ | Spent 0.61 ₽ | (11.74 in / 58.72 out ₽/1M)
+Polza 43.54 ₽ | Spent 0.61 ₽                        (11.74 in / 58.72 out ₽/1M)
 ```
 
-* `in` is input, `out` is output. The line is right-aligned, mirroring how Pi aligns the model name.
+* Account balance and session spend stay on the left, the model price sits on the right; `in` is
+  input, `out` is output.
 * The value comes from the catalog fetched at every Pi start. When it is missing or older than an
   hour it is refreshed through `GET /api/v1/models/{id}`; otherwise no request is made.
 * It is a reference for choosing a model, not a per-request calculation: actual billing is `Spent`
