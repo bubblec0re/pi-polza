@@ -47,6 +47,7 @@
   "scripts": {
     "probe:catalog": "node scripts/probe-catalog.ts",
     "probe:balance": "node scripts/probe-balance.ts",
+    "probe:price": "node scripts/probe-price.ts",
     "probe:chat": "node scripts/probe-chat.ts",
     "probe:stream": "node scripts/probe-stream.ts",
     "probe:cache": "node scripts/probe-cache.ts",
