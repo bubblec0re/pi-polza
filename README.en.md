@@ -30,7 +30,7 @@ models exist, what their limits are, or what a request actually cost. This plugi
 - OpenRouter metadata enrichment (limits, modalities, capabilities)
 - Actual `usage.cost_rub` accounting — Polza's own number, not an estimate
 - Subagent cost accounting: foreground automatically, background on run completion
-- Account balance and session cost in Pi's footer
+- Account balance, session cost and the selected model's catalog price in Pi's footer
 - Streaming responses and tool calling
 - Four slash commands for inspecting models, cost and balance
 
@@ -173,7 +173,8 @@ users or peers, even when they share the same Polza account; external API client
 outside `pi-polza`. Foreign spend is never converted to RUB and **never shown as `0 ₽`** — it is
 simply excluded from the report.
 
-**Where to look.** Pi's footer (`Polza <balance> ₽ | Spent <cost> ₽`) and `/polza-cost`.
+**Where to look.** Pi's footer (`Polza <balance> ₽ | Spent <cost> ₽ | (X in / Y out ₽/1M)`) and
+`/polza-cost`.
 `/polza-balance` shows the **whole account wallet**, not session cost: the balance also moves
 because of other sessions and applications, so its delta is not a measure of one run.
 
@@ -188,6 +189,24 @@ unknown and never becomes `0 ₽`.
 
 > The `pi-subagents` integration is **optional**. If the package is not installed, `pi-polza`
 > behaves as before: nothing is discovered and no errors are shown.
+
+## Selected model price in the footer
+
+The right-hand side of the footer shows the model's reference price from the Polza catalog — the same
+number the website shows — in RUB per million tokens:
+
+```text
+Polza 43.54 ₽ | Spent 0.61 ₽ | (11.74 in / 58.72 out ₽/1M)
+```
+
+* `in` is input, `out` is output. The line is right-aligned, mirroring how Pi aligns the model name.
+* The value comes from the catalog fetched at every Pi start. When it is missing or older than an
+  hour it is refreshed through `GET /api/v1/models/{id}`; otherwise no request is made.
+* It is a reference for choosing a model, not a per-request calculation: actual billing is `Spent`
+  (and `/polza-cost`), which uses `usage.cost_rub` from Polza.
+* When no price exists (model outside the catalog) the segment is omitted — a zero is never invented.
+* Precision is adaptive (up to four decimals for very cheap models, whole RUB per million for
+  expensive ones); cache pricing and the full breakdown stay in `/polza-model-info`.
 
 ## Commands
 
