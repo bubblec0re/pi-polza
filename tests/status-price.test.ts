@@ -5,12 +5,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PolzaBalance } from "../.pi/extensions/pi-polza/balance.ts";
 import type { PolzaPricingRUB } from "../.pi/extensions/pi-polza/metadata/types.ts";
+import { rubPerMillion } from "../.pi/extensions/pi-polza/presentation.ts";
 import { PAD_UNIT, RIGHT_ALIGN_RESERVE } from "../.pi/extensions/pi-polza/align.ts";
 import {
   PLAIN_STATUS_THEME,
   PolzaStatusController,
   formatBalanceStatus,
-  formatPricePerMillion,
   polzaStatusModel,
   renderPolzaStatus,
   type BalanceSnapshot,
@@ -66,23 +66,16 @@ function recordingTheme(): { theme: StatusTheme; calls: Array<{ color: string; t
   };
 }
 
-test("formatPricePerMillion keeps cheap models distinguishable and wide ones short", () => {
-  assert.equal(formatPricePerMillion(11.7434), "11.74");
-  assert.equal(formatPricePerMillion(58.717), "58.72");
-  assert.equal(formatPricePerMillion(9.277286), "9.28");
-  assert.equal(formatPricePerMillion(587.17), "587.17");
-  assert.equal(formatPricePerMillion(17615.1), "17615");
-  assert.equal(formatPricePerMillion(0.460341), "0.460");
-  assert.equal(formatPricePerMillion(0.08712), "0.0871");
-  assert.equal(formatPricePerMillion(1), "1.00");
-  assert.equal(formatPricePerMillion(null), null);
-  assert.equal(formatPricePerMillion(Number.NaN), null);
-  assert.equal(formatPricePerMillion(-1), null);
+test("the footer prints prices with the same formatter as /polza-model-info", () => {
+  // rubPerMillion() is shared: no second precision/unit implementation to drift.
+  assert.equal(rubPerMillion(11.7434), "11.7434 ₽ / 1M");
+  assert.equal(rubPerMillion(0.460341), "0.460341 ₽ / 1M");
+  assert.equal(rubPerMillion(null), "unknown");
 });
 
 test("footer appends the catalog in/out price after the spend", () => {
   const text = formatBalanceStatus(snap(43.54, "fresh"), { requests: 2, costRub: 0.61 }, priceSnap(11.7434, 58.717));
-  assert.equal(text, "Polza 43.54 ₽ | Spent 0.61 ₽ | (11.74 in / 58.72 out ₽/1M)");
+  assert.equal(text, "Polza 43.54 ₽ | Spent 0.61 ₽ | (in 11.7434 ₽ / 1M · out 58.717 ₽ / 1M)");
 });
 
 test("price is omitted instead of guessed when it is unknown or one-sided", () => {
@@ -108,10 +101,10 @@ test("price values use the normal text colour, hints stay muted and faint", () =
     theme,
     polzaStatusModel(snap(43.54, "fresh"), { requests: 1, costRub: 0.61 }, priceSnap(11.74, 58.72)),
   );
-  assert.ok(calls.some((c) => c.color === "text" && c.text === "11.74"));
-  assert.ok(calls.some((c) => c.color === "text" && c.text === "58.72"));
-  assert.ok(calls.some((c) => c.color === "muted" && c.text === " in / "));
-  assert.ok(calls.some((c) => c.color === "muted" && c.text === " out ₽/1M)"));
+  assert.ok(calls.some((c) => c.color === "text" && c.text === "11.74 ₽ / 1M"));
+  assert.ok(calls.some((c) => c.color === "text" && c.text === "58.72 ₽ / 1M"));
+  assert.ok(calls.some((c) => c.color === "muted" && c.text === "in "));
+  assert.ok(calls.some((c) => c.color === "muted" && c.text === " · out "));
   assert.equal(calls.some((c) => c.color === "text" && c.text.includes("?")), false, "no placeholder is invented");
 });
 
@@ -146,16 +139,16 @@ function buildPriceController(
 test("a registry price renders immediately and is never re-requested", async () => {
   const h = buildPriceController();
   h.controller.activate();
-  assert.equal(h.last(), "Polza ? | Spent 0.61 ₽ | (9.28 in / 164.41 out ₽/1M)");
+  assert.equal(h.last(), "Polza ? | Spent 0.61 ₽ | (in 9.277286 ₽ / 1M · out 164.4076 ₽ / 1M)");
   await tick();
-  assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (9.28 in / 164.41 out ₽/1M)");
+  assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (in 9.277286 ₽ / 1M · out 164.4076 ₽ / 1M)");
   assert.equal(h.controller.priceSnapshot?.state, "fresh");
 
   // Nothing about time passing may trigger a price refresh: the registry is the source.
   h.advance(24 * 60 * 60 * 1000);
   h.controller.requestCompleted();
   await tick();
-  assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (9.28 in / 164.41 out ₽/1M)");
+  assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (in 9.277286 ₽ / 1M · out 164.4076 ₽ / 1M)");
 });
 
 test("a model outside the catalog has no price segment", async () => {
@@ -175,7 +168,7 @@ test("the catalog rebuild re-reads prices, including for a model that had none",
 
   price = pricing(44.0378, 220.1887);
   h.controller.catalogUpdated();
-  assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (44.04 in / 220.19 out ₽/1M)");
+  assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (in 44.0378 ₽ / 1M · out 220.1887 ₽ / 1M)");
 });
 
 test("switching models shows the new model's registry price immediately", async () => {
@@ -194,11 +187,11 @@ test("switching models shows the new model's registry price immediately", async 
 
   controller.activate();
   await tick();
-  assert.match(statuses.at(-1) ?? "", /\(9\.28 in \/ 164\.41 out ₽\/1M\)/);
+  assert.match(statuses.at(-1) ?? "", /\(in 9\.277286 ₽ \/ 1M · out 164\.4076 ₽ \/ 1M\)/);
 
   current = "anthropic/claude-haiku-5.5";
   controller.modelChanged();
-  assert.match(statuses.at(-1) ?? "", /\(11\.74 in \/ 58\.72 out ₽\/1M\)/);
+  assert.match(statuses.at(-1) ?? "", /\(in 11\.7434 ₽ \/ 1M · out 58\.717 ₽ \/ 1M\)/);
 });
 
 test("price disappears when the provider is not Polza", async () => {
@@ -206,7 +199,7 @@ test("price disappears when the provider is not Polza", async () => {
   const h = buildPriceController({ modelId: () => modelId });
   h.controller.activate();
   await tick();
-  assert.match(h.last() ?? "", /out ₽\/1M\)/);
+  assert.match(h.last() ?? "", /out 164\.4076 ₽ \/ 1M\)/);
 
   modelId = null;
   h.controller.modelChanged();
@@ -222,12 +215,12 @@ test("with a layout the account stays left and the price moves to the right edge
   const model = polzaStatusModel(snap(43.54, "fresh"), { requests: 2, costRub: 0.61 }, priceSnap(11.7434, 58.717));
   const line = renderPolzaStatus(PLAIN_STATUS_THEME, model, { columns: 120, measure: (text) => text.length });
   assert.ok(line.startsWith("Polza 43.54 ₽ | Spent 0.61 ₽"), "balance and spend keep the left edge");
-  assert.ok(line.endsWith("(11.74 in / 58.72 out ₽/1M)"), "price ends the line");
+  assert.ok(line.endsWith("(in 11.7434 ₽ / 1M · out 58.717 ₽ / 1M)"), "price ends the line");
   assert.equal(cells(line), 120 - RIGHT_ALIGN_RESERVE);
   assert.ok(line.includes(PAD_UNIT), "the two halves are separated by a gap, not by a space run");
 });
 
 test("without a layout (plain callers, tests) the halves keep the pipe separator", () => {
   const model = polzaStatusModel(snap(43.54, "fresh"), { requests: 2, costRub: 0.61 }, priceSnap(11.7434, 58.717));
-  assert.equal(renderPolzaStatus(PLAIN_STATUS_THEME, model), "Polza 43.54 ₽ | Spent 0.61 ₽ | (11.74 in / 58.72 out ₽/1M)");
+  assert.equal(renderPolzaStatus(PLAIN_STATUS_THEME, model), "Polza 43.54 ₽ | Spent 0.61 ₽ | (in 11.7434 ₽ / 1M · out 58.717 ₽ / 1M)");
 });

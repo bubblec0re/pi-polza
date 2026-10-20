@@ -104,7 +104,11 @@ function booleanRole(value: boolean | null): ValueRole {
   return value ? "success" : "dim";
 }
 
-function rubPerMillion(value: number | null): string {
+/**
+ * `11.7434 ₽ / 1M`. Shared with the footer (status.ts), so `/polza-model-info` and the status line
+ * print the same numbers with the same precision and the same unit.
+ */
+export function rubPerMillion(value: number | null): string {
   return value === null ? "unknown" : `${value} ₽ / 1M`;
 }
 

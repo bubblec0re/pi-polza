@@ -10,6 +10,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { splitStatusLine, type WidthMeasure } from "./align.ts";
 import type { PolzaBalance } from "./balance.ts";
 import type { PolzaPricingRUB } from "./metadata/types.ts";
+import { rubPerMillion } from "./presentation.ts";
 
 /** Minimal theme surface the footer needs (keeps this module free of TUI internals). */
 export type StatusTheme = Pick<Theme, "fg" | "bold">;
@@ -45,18 +46,6 @@ export function formatRubCompact(value: number | null): string {
   if (abs >= 0.1) return `${value.toFixed(2)} ₽`;
   if (abs >= 0.001) return `${value.toFixed(4)} ₽`;
   return `${value.toFixed(6)} ₽`;
-}
-
-/**
- * RUB per 1M tokens. Adaptive precision: catalog prices span 0.46 → 70 460 ₽/1M, so a fixed two
- * decimals would print cheap models as `0.00` and wide ones with four useless digits.
- */
-export function formatPricePerMillion(value: number | null): string | null {
-  if (value === null || !Number.isFinite(value) || value < 0) return null;
-  if (value >= 1000) return String(Math.round(value));
-  if (value >= 1) return value.toFixed(2);
-  if (value >= 0.1) return value.toFixed(3);
-  return value.toFixed(4);
 }
 
 /** Price state: `fresh` = read from the catalog registry, `unknown` = the model publishes no price. */
@@ -103,15 +92,15 @@ export interface PolzaStatusModel {
 }
 
 /**
- * Turn a price snapshot into the footer values. Both sides are shown, or the segment is omitted:
- * a one-sided price would read as if the other half were free.
+ * Turn a price snapshot into the footer values, formatted by the same `rubPerMillion()` the
+ * `/polza-model-info` panel uses. Both sides are shown, or the segment is omitted: a one-sided price
+ * would read as if the other half were free.
  */
 function priceCell(snapshot: PriceSnapshot | null | undefined): { input: string; output: string } | null {
   if (!snapshot || !snapshot.price) return null;
-  const input = formatPricePerMillion(snapshot.price.promptPerMillion);
-  const output = formatPricePerMillion(snapshot.price.completionPerMillion);
-  if (input === null || output === null) return null;
-  return { input, output };
+  const { promptPerMillion, completionPerMillion } = snapshot.price;
+  if (promptPerMillion === null || completionPerMillion === null) return null;
+  return { input: rubPerMillion(promptPerMillion), output: rubPerMillion(completionPerMillion) };
 }
 
 export function polzaStatusModel(
@@ -168,15 +157,16 @@ export function renderStatusAccount(theme: StatusTheme, model: PolzaStatusModel)
   ].join("");
 }
 
-/** Right half: `(11.74 in / 58.72 out ₽/1M)`, or null when the price is unknown. */
+/** Right half: `(in 11.7434 ₽ / 1M · out 58.717 ₽ / 1M)`, or null when the price is unknown. */
 export function renderStatusPrice(theme: StatusTheme, model: PolzaStatusModel): string | null {
   if (!model.price) return null;
   return [
     theme.fg("muted", "("),
+    theme.fg("muted", "in "),
     theme.fg("text", model.price.input),
-    theme.fg("muted", " in / "),
+    theme.fg("muted", " · out "),
     theme.fg("text", model.price.output),
-    theme.fg("muted", " out ₽/1M)"),
+    theme.fg("muted", ")"),
   ].join("");
 }
 
