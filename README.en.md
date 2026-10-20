@@ -196,7 +196,7 @@ The right-hand side of the footer shows the model's reference price from the Pol
 number the website shows — in RUB per million tokens:
 
 ```text
-Polza 43.54 ₽ | Spent 0.61 ₽                        (in 11.7434 ₽ / 1M · out 58.717 ₽ / 1M)
+Polza 43.54 ₽ | Spent 0.61 ₽                        (in 11.74 ₽ / 1M · out 58.72 ₽ / 1M)
 ```
 
 * Account balance and session spend stay on the left, the model price sits on the right; `in` is
@@ -206,8 +206,9 @@ Polza 43.54 ₽ | Spent 0.61 ₽                        (in 11.7434 ₽ / 1M · 
 * It is a reference for choosing a model, not a per-request calculation: actual billing is `Spent`
   (and `/polza-cost`), which uses `usage.cost_rub` from Polza.
 * When no price exists (model outside the catalog) the segment is omitted — a zero is never invented.
-* Numbers are formatted by the same helper the `/polza-model-info` panel uses, so footer and command
-  always agree; cache pricing and the full breakdown stay in `/polza-model-info`.
+* Numbers are formatted by the same helper the `/polza-model-info` panel uses; the footer rounds to two
+  decimals like the balance and the spend do, while the command shows the published precision. Cache
+  pricing and the full breakdown stay in `/polza-model-info`.
 
 ## Commands
 

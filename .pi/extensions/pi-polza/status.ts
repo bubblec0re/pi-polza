@@ -91,6 +91,9 @@ export interface PolzaStatusModel {
   priceState: PriceState;
 }
 
+/** Prices are shown with the same precision as the balance and the spend: two decimals. */
+export const PRICE_FRACTION_DIGITS = 2;
+
 /**
  * Turn a price snapshot into the footer values, formatted by the same `rubPerMillion()` the
  * `/polza-model-info` panel uses. Both sides are shown, or the segment is omitted: a one-sided price
@@ -100,7 +103,10 @@ function priceCell(snapshot: PriceSnapshot | null | undefined): { input: string;
   if (!snapshot || !snapshot.price) return null;
   const { promptPerMillion, completionPerMillion } = snapshot.price;
   if (promptPerMillion === null || completionPerMillion === null) return null;
-  return { input: rubPerMillion(promptPerMillion), output: rubPerMillion(completionPerMillion) };
+  return {
+    input: rubPerMillion(promptPerMillion, PRICE_FRACTION_DIGITS),
+    output: rubPerMillion(completionPerMillion, PRICE_FRACTION_DIGITS),
+  };
 }
 
 export function polzaStatusModel(
@@ -157,7 +163,7 @@ export function renderStatusAccount(theme: StatusTheme, model: PolzaStatusModel)
   ].join("");
 }
 
-/** Right half: `(in 11.7434 ₽ / 1M · out 58.717 ₽ / 1M)`, or null when the price is unknown. */
+/** Right half: `(in 11.74 ₽ / 1M · out 58.72 ₽ / 1M)`, or null when the price is unknown. */
 export function renderStatusPrice(theme: StatusTheme, model: PolzaStatusModel): string | null {
   if (!model.price) return null;
   return [

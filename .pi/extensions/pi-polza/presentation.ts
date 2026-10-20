@@ -105,11 +105,14 @@ function booleanRole(value: boolean | null): ValueRole {
 }
 
 /**
- * `11.7434 ₽ / 1M`. Shared with the footer (status.ts), so `/polza-model-info` and the status line
- * print the same numbers with the same precision and the same unit.
+ * `11.7434 ₽ / 1M`. Shared with the footer (status.ts): one formatter, one unit, one place to change.
+ *
+ * The panel prints the published value as-is; the footer passes `fractionDigits` to keep the status
+ * line short (`9.28 ₽ / 1M`).
  */
-export function rubPerMillion(value: number | null): string {
-  return value === null ? "unknown" : `${value} ₽ / 1M`;
+export function rubPerMillion(value: number | null, fractionDigits?: number): string {
+  if (value === null) return "unknown";
+  return fractionDigits === undefined ? `${value} ₽ / 1M` : `${value.toFixed(fractionDigits)} ₽ / 1M`;
 }
 
 function rubOrUnknown(value: number | null): string {

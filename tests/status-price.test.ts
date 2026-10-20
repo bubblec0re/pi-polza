@@ -10,6 +10,7 @@ import { PAD_UNIT, RIGHT_ALIGN_RESERVE } from "../.pi/extensions/pi-polza/align.
 import {
   PLAIN_STATUS_THEME,
   PolzaStatusController,
+  PRICE_FRACTION_DIGITS,
   formatBalanceStatus,
   polzaStatusModel,
   renderPolzaStatus,
@@ -67,15 +68,16 @@ function recordingTheme(): { theme: StatusTheme; calls: Array<{ color: string; t
 }
 
 test("the footer prints prices with the same formatter as /polza-model-info", () => {
-  // rubPerMillion() is shared: no second precision/unit implementation to drift.
+  // One helper, one unit: the panel shows the published value, the footer asks for two decimals.
   assert.equal(rubPerMillion(11.7434), "11.7434 ₽ / 1M");
-  assert.equal(rubPerMillion(0.460341), "0.460341 ₽ / 1M");
+  assert.equal(rubPerMillion(11.7434, PRICE_FRACTION_DIGITS), "11.74 ₽ / 1M");
+  assert.equal(rubPerMillion(17615.1, PRICE_FRACTION_DIGITS), "17615.10 ₽ / 1M");
   assert.equal(rubPerMillion(null), "unknown");
 });
 
 test("footer appends the catalog in/out price after the spend", () => {
   const text = formatBalanceStatus(snap(43.54, "fresh"), { requests: 2, costRub: 0.61 }, priceSnap(11.7434, 58.717));
-  assert.equal(text, "Polza 43.54 ₽ | Spent 0.61 ₽ | (in 11.7434 ₽ / 1M · out 58.717 ₽ / 1M)");
+  assert.equal(text, "Polza 43.54 ₽ | Spent 0.61 ₽ | (in 11.74 ₽ / 1M · out 58.72 ₽ / 1M)");
 });
 
 test("price is omitted instead of guessed when it is unknown or one-sided", () => {
@@ -139,16 +141,16 @@ function buildPriceController(
 test("a registry price renders immediately and is never re-requested", async () => {
   const h = buildPriceController();
   h.controller.activate();
-  assert.equal(h.last(), "Polza ? | Spent 0.61 ₽ | (in 9.277286 ₽ / 1M · out 164.4076 ₽ / 1M)");
+  assert.equal(h.last(), "Polza ? | Spent 0.61 ₽ | (in 9.28 ₽ / 1M · out 164.41 ₽ / 1M)");
   await tick();
-  assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (in 9.277286 ₽ / 1M · out 164.4076 ₽ / 1M)");
+  assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (in 9.28 ₽ / 1M · out 164.41 ₽ / 1M)");
   assert.equal(h.controller.priceSnapshot?.state, "fresh");
 
   // Nothing about time passing may trigger a price refresh: the registry is the source.
   h.advance(24 * 60 * 60 * 1000);
   h.controller.requestCompleted();
   await tick();
-  assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (in 9.277286 ₽ / 1M · out 164.4076 ₽ / 1M)");
+  assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (in 9.28 ₽ / 1M · out 164.41 ₽ / 1M)");
 });
 
 test("a model outside the catalog has no price segment", async () => {
@@ -168,7 +170,7 @@ test("the catalog rebuild re-reads prices, including for a model that had none",
 
   price = pricing(44.0378, 220.1887);
   h.controller.catalogUpdated();
-  assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (in 44.0378 ₽ / 1M · out 220.1887 ₽ / 1M)");
+  assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (in 44.04 ₽ / 1M · out 220.19 ₽ / 1M)");
 });
 
 test("switching models shows the new model's registry price immediately", async () => {
@@ -187,11 +189,11 @@ test("switching models shows the new model's registry price immediately", async 
 
   controller.activate();
   await tick();
-  assert.match(statuses.at(-1) ?? "", /\(in 9\.277286 ₽ \/ 1M · out 164\.4076 ₽ \/ 1M\)/);
+  assert.match(statuses.at(-1) ?? "", /\(in 9\.28 ₽ \/ 1M · out 164\.41 ₽ \/ 1M\)/);
 
   current = "anthropic/claude-haiku-5.5";
   controller.modelChanged();
-  assert.match(statuses.at(-1) ?? "", /\(in 11\.7434 ₽ \/ 1M · out 58\.717 ₽ \/ 1M\)/);
+  assert.match(statuses.at(-1) ?? "", /\(in 11\.74 ₽ \/ 1M · out 58\.72 ₽ \/ 1M\)/);
 });
 
 test("price disappears when the provider is not Polza", async () => {
@@ -199,7 +201,7 @@ test("price disappears when the provider is not Polza", async () => {
   const h = buildPriceController({ modelId: () => modelId });
   h.controller.activate();
   await tick();
-  assert.match(h.last() ?? "", /out 164\.4076 ₽ \/ 1M\)/);
+  assert.match(h.last() ?? "", /out 164\.41 ₽ \/ 1M\)/);
 
   modelId = null;
   h.controller.modelChanged();
@@ -215,12 +217,12 @@ test("with a layout the account stays left and the price moves to the right edge
   const model = polzaStatusModel(snap(43.54, "fresh"), { requests: 2, costRub: 0.61 }, priceSnap(11.7434, 58.717));
   const line = renderPolzaStatus(PLAIN_STATUS_THEME, model, { columns: 120, measure: (text) => text.length });
   assert.ok(line.startsWith("Polza 43.54 ₽ | Spent 0.61 ₽"), "balance and spend keep the left edge");
-  assert.ok(line.endsWith("(in 11.7434 ₽ / 1M · out 58.717 ₽ / 1M)"), "price ends the line");
+  assert.ok(line.endsWith("(in 11.74 ₽ / 1M · out 58.72 ₽ / 1M)"), "price ends the line");
   assert.equal(cells(line), 120 - RIGHT_ALIGN_RESERVE);
   assert.ok(line.includes(PAD_UNIT), "the two halves are separated by a gap, not by a space run");
 });
 
 test("without a layout (plain callers, tests) the halves keep the pipe separator", () => {
   const model = polzaStatusModel(snap(43.54, "fresh"), { requests: 2, costRub: 0.61 }, priceSnap(11.7434, 58.717));
-  assert.equal(renderPolzaStatus(PLAIN_STATUS_THEME, model), "Polza 43.54 ₽ | Spent 0.61 ₽ | (in 11.7434 ₽ / 1M · out 58.717 ₽ / 1M)");
+  assert.equal(renderPolzaStatus(PLAIN_STATUS_THEME, model), "Polza 43.54 ₽ | Spent 0.61 ₽ | (in 11.74 ₽ / 1M · out 58.72 ₽ / 1M)");
 });
