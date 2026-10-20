@@ -20,15 +20,6 @@ export const POLZA_STATUS_KEY = "polza-accounting";
 /** Balance is re-fetched at most this often (during activation / after a completed request). */
 export const BALANCE_TTL_MS = 45_000;
 
-/**
- * Price is re-fetched at most this often. Catalog RUB prices drift slowly (≈0.2 % per month, they look
- * FX-derived), so an hour is already generous; there is no timer, only a check on activation/model change.
- */
-export const PRICE_TTL_MS = 60 * 60 * 1000;
-
-/** After a failed price request, wait this long before trying the same model again. */
-export const PRICE_RETRY_MS = 5 * 60 * 1000;
-
 export type BalanceState = "fresh" | "stale" | "unavailable";
 
 export interface BalanceSnapshot {
@@ -68,8 +59,8 @@ export function formatPricePerMillion(value: number | null): string | null {
   return value.toFixed(4);
 }
 
-/** Price state: `unknown` = never obtained, `stale` = last known value survived a failed refresh. */
-export type PriceState = "fresh" | "stale" | "unknown";
+/** Price state: `fresh` = read from the catalog registry, `unknown` = the model publishes no price. */
+export type PriceState = "fresh" | "unknown";
 
 export interface PriceSnapshot {
   /** Model the price belongs to; a snapshot for another model must never be rendered. */
@@ -208,38 +199,32 @@ export interface StatusControllerDeps {
   getSessionCost: () => SessionCost;
   /** Model currently selected in Pi, or null when it is not a Polza model. */
   getActiveModelId?: () => string | null;
-  /** Price already known from the in-memory catalog registry (no request). */
+  /**
+   * Price of a model from the in-memory catalog registry — the very same `pricing.polzaRUB` that
+   * `/polza-model-info` prints. No request is made for it.
+   */
   getCatalogPrice?: (modelId: string) => ModelPrice | null;
-  /** Live price for one model, used when the registry has nothing or the value expired. */
-  fetchPrice?: (modelId: string, signal?: AbortSignal) => Promise<ModelPrice | null>;
   ttlMs?: number;
-  /** Separate, longer TTL for prices (catalog RUB rates drift slowly). */
-  priceTtlMs?: number;
   now?: () => number;
 }
 
 /**
- * Owns the balance and price caches and decides when to (re)fetch. Rendering is a pure function of
+ * Owns the balance cache and the price snapshot. Rendering is a pure function of
  * the caches and the session accumulator, so it is cheap to call after every billed request.
  */
 export class PolzaStatusController {
   private balance: BalanceSnapshot = { value: null, fetchedAt: 0, state: "unavailable" };
   private lastBalance: PolzaBalance | null = null;
   private price: PriceSnapshot | null = null;
-  /** Last fetch attempt per model, so a failing endpoint is not retried on every render. */
-  private priceAttempt: { modelId: string; at: number } | null = null;
   private active = false;
   private refreshing = false;
-  private refreshingPrice = false;
   private readonly deps: StatusControllerDeps;
   private readonly ttlMs: number;
-  private readonly priceTtlMs: number;
   private readonly now: () => number;
 
   constructor(deps: StatusControllerDeps) {
     this.deps = deps;
     this.ttlMs = deps.ttlMs ?? BALANCE_TTL_MS;
-    this.priceTtlMs = deps.priceTtlMs ?? PRICE_TTL_MS;
     this.now = deps.now ?? (() => Date.now());
   }
 
@@ -262,12 +247,12 @@ export class PolzaStatusController {
   }
 
   /**
-   * Show the status for the Polza provider. Seeds the price from the registry (free), refreshes the
-   * balance and the price only when their TTLs expired.
+   * Show the status for the Polza provider. The price is read from the catalog registry (no request);
+   * only the balance has a TTL and a live refresh.
    */
   activate(signal?: AbortSignal): void {
     this.active = true;
-    this.syncPrice(signal);
+    this.syncPrice();
     this.render();
     if (this.isStale()) void this.refreshBalance(signal);
   }
@@ -286,9 +271,9 @@ export class PolzaStatusController {
     this.activate(signal);
   }
 
-  /** The catalog registry was rebuilt (startup fetch / `/polza-refresh`): re-seed prices for free. */
+  /** The catalog registry was rebuilt (startup fetch / `/polza-refresh`): re-read the price. */
   catalogUpdated(): void {
-    this.syncPrice();
+    this.syncPrice(true);
     this.render();
   }
 
@@ -297,10 +282,10 @@ export class PolzaStatusController {
     this.render();
   }
 
-  /** Called after a response was accounted: re-render now, refresh only when a TTL expired. */
+  /** Called after a response was accounted: re-render now, refresh the balance when its TTL expired. */
   requestCompleted(signal?: AbortSignal): void {
     if (!this.active) return;
-    this.syncPrice(signal);
+    this.syncPrice();
     this.render();
     if (this.isStale()) void this.refreshBalance(signal);
   }
@@ -330,12 +315,6 @@ export class PolzaStatusController {
     return this.now() - this.balance.fetchedAt >= this.ttlMs;
   }
 
-  private isPriceStale(): boolean {
-    if (!this.price || !this.price.price) return true;
-    if (this.price.modelId !== this.currentModelId()) return true;
-    return this.now() - this.price.fetchedAt >= this.priceTtlMs;
-  }
-
   private currentModelId(): string | null {
     try {
       return this.deps.getActiveModelId?.() ?? null;
@@ -345,59 +324,24 @@ export class PolzaStatusController {
   }
 
   /**
-   * Point the snapshot at the currently selected model: reuse a fresh value for the same model, else
-   * take the catalog registry value, else mark it unknown. Schedules a live refresh when needed.
+   * Point the snapshot at the currently selected model and read its price from the catalog registry.
+   *
+   * There is deliberately no price request here: the registry already holds Polza's catalog prices
+   * (fetched at every Pi start and by `/polza-refresh`), and it is the same `pricing.polzaRUB` the
+   * `/polza-model-info` panel prints. One source, one number, no extra traffic.
    */
-  private syncPrice(signal?: AbortSignal): void {
+  private syncPrice(force = false): void {
     const modelId = this.currentModelId();
     if (modelId === null) {
       this.price = null;
       return;
     }
+    if (!force && this.price?.modelId === modelId) return;
 
-    const sameModel = this.price?.modelId === modelId;
-    if (!sameModel || !this.price?.price) {
-      const catalog = this.deps.getCatalogPrice?.(modelId) ?? null;
-      this.price = catalog
-        ? { modelId, price: catalog, fetchedAt: this.now(), state: "fresh" }
-        : { modelId, price: null, fetchedAt: 0, state: "unknown" };
-    }
-
-    if (this.shouldFetchPrice()) void this.refreshPrice(signal);
-  }
-
-  /** Whether a live price request is due: stale value, no recent failed attempt, nothing in flight. */
-  private shouldFetchPrice(): boolean {
-    const modelId = this.currentModelId();
-    if (modelId === null || !this.deps.fetchPrice || this.refreshingPrice) return false;
-    const lastAttempt = this.priceAttempt?.modelId === modelId ? this.priceAttempt.at : 0;
-    if (this.now() - lastAttempt < PRICE_RETRY_MS) return false;
-    return this.isPriceStale();
-  }
-
-  /** Fetch the price of the selected model; a failure keeps the last known value marked `stale`. */
-  async refreshPrice(signal?: AbortSignal): Promise<void> {
-    const modelId = this.currentModelId();
-    if (modelId === null || !this.deps.fetchPrice || this.refreshingPrice) return;
-    this.refreshingPrice = true;
-    this.priceAttempt = { modelId, at: this.now() };
-    try {
-      const price = await this.deps.fetchPrice(modelId, signal);
-      // The model may have changed while the request was in flight: never paint a foreign price.
-      if (this.currentModelId() !== modelId) return;
-      const known = this.price?.modelId === modelId ? (this.price.price ?? null) : null;
-      if (price) {
-        this.price = { modelId, price, fetchedAt: this.now(), state: "fresh" };
-      } else {
-        this.price = { modelId, price: known, fetchedAt: this.price?.fetchedAt ?? 0, state: known ? "stale" : "unknown" };
-      }
-    } catch {
-      const known = this.price?.modelId === modelId ? (this.price.price ?? null) : null;
-      this.price = { modelId, price: known, fetchedAt: this.price?.fetchedAt ?? 0, state: known ? "stale" : "unknown" };
-    } finally {
-      this.refreshingPrice = false;
-    }
-    this.render();
+    const catalog = this.deps.getCatalogPrice?.(modelId) ?? null;
+    this.price = catalog
+      ? { modelId, price: catalog, fetchedAt: this.now(), state: "fresh" }
+      : { modelId, price: null, fetchedAt: 0, state: "unknown" };
   }
 
   private render(): void {

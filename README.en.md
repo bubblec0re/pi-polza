@@ -201,8 +201,8 @@ Polza 43.54 ₽ | Spent 0.61 ₽                        (11.74 in / 58.72 out �
 
 * Account balance and session spend stay on the left, the model price sits on the right; `in` is
   input, `out` is output.
-* The value comes from the catalog fetched at every Pi start. When it is missing or older than an
-  hour it is refreshed through `GET /api/v1/models/{id}`; otherwise no request is made.
+* The value comes from the same catalog `/polza-model-info` prints: it is fetched at every Pi start and
+  by `/polza-refresh`. No extra request is made for the price.
 * It is a reference for choosing a model, not a per-request calculation: actual billing is `Spent`
   (and `/polza-cost`), which uses `usage.cost_rub` from Polza.
 * When no price exists (model outside the catalog) the segment is omitted — a zero is never invented.

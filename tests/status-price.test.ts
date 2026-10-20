@@ -8,8 +8,6 @@ import type { ModelPrice } from "../.pi/extensions/pi-polza/model-price.ts";
 import { PAD_UNIT, RIGHT_ALIGN_RESERVE } from "../.pi/extensions/pi-polza/align.ts";
 import {
   PLAIN_STATUS_THEME,
-  PRICE_RETRY_MS,
-  PRICE_TTL_MS,
   PolzaStatusController,
   formatBalanceStatus,
   formatPricePerMillion,
@@ -108,40 +106,25 @@ test("price values use the normal text colour, hints stay muted and faint", () =
 
 interface PriceHarness {
   controller: PolzaStatusController;
-  fetches: () => number;
-  fetchedIds: string[];
   advance: (ms: number) => void;
   last: () => string | undefined;
 }
 
 function buildPriceController(
-  opts: {
-    catalog?: ModelPrice | null;
-    fetch?: (modelId: string) => Promise<ModelPrice | null>;
-    modelId?: () => string | null;
-  } = {},
+  opts: { catalog?: (modelId: string) => ModelPrice | null; modelId?: () => string | null } = {},
 ): PriceHarness {
   const statuses: Array<string | undefined> = [];
-  const fetchedIds: string[] = [];
   let now = 1_000_000;
-  let fetchCount = 0;
   const controller = new PolzaStatusController({
     setStatus: pushPlain(statuses),
     fetchBalance: async () => balance(43.5),
     getSessionCost: () => ({ requests: 1, costRub: 0.61 }),
     getActiveModelId: opts.modelId ?? (() => "z-ai/glm-5.3"),
-    getCatalogPrice: () => (opts.catalog === undefined ? { input: 9.277286, output: 164.4076 } : opts.catalog),
-    fetchPrice: async (modelId) => {
-      fetchCount += 1;
-      fetchedIds.push(modelId);
-      return opts.fetch ? opts.fetch(modelId) : { input: 9.2773, output: 164.4076 };
-    },
+    getCatalogPrice: (modelId) => (opts.catalog ? opts.catalog(modelId) : { input: 9.277286, output: 164.4076 }),
     now: () => now,
   });
   return {
     controller,
-    fetchedIds,
-    fetches: () => fetchCount,
     advance: (ms) => {
       now += ms;
     },
@@ -149,81 +132,43 @@ function buildPriceController(
   };
 }
 
-test("a registry price renders immediately and costs no request", async () => {
+test("a registry price renders immediately and is never re-requested", async () => {
   const h = buildPriceController();
   h.controller.activate();
   assert.equal(h.last(), "Polza ? | Spent 0.61 ₽ | (9.28 in / 164.41 out ₽/1M)");
   await tick();
-  assert.equal(h.fetches(), 0, "catalog price is used as-is while fresh");
   assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (9.28 in / 164.41 out ₽/1M)");
   assert.equal(h.controller.priceSnapshot?.state, "fresh");
+
+  // Nothing about time passing may trigger a price refresh: the registry is the source.
+  h.advance(24 * 60 * 60 * 1000);
+  h.controller.requestCompleted();
+  await tick();
+  assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (9.28 in / 164.41 out ₽/1M)");
 });
 
-test("a model missing from the registry is priced live, then cached for the TTL", async () => {
-  const h = buildPriceController({ catalog: null, fetch: async () => ({ input: 44.0378, output: 220.1887 }) });
+test("a model outside the catalog has no price segment", async () => {
+  const h = buildPriceController({ catalog: () => null });
   h.controller.activate();
   await tick();
-  assert.equal(h.fetches(), 1);
-  assert.deepEqual(h.fetchedIds, ["z-ai/glm-5.3"]);
+  assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽");
+  assert.equal(h.controller.priceSnapshot?.state, "unknown");
+});
+
+test("the catalog rebuild re-reads prices, including for a model that had none", async () => {
+  let price: ModelPrice | null = null;
+  const h = buildPriceController({ catalog: () => price });
+  h.controller.activate();
+  await tick();
+  assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽", "not in the catalog yet");
+
+  price = { input: 44.0378, output: 220.1887 };
+  h.controller.catalogUpdated();
   assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (44.04 in / 220.19 out ₽/1M)");
-
-  h.controller.requestCompleted();
-  await tick();
-  assert.equal(h.fetches(), 1, "fresh price is not refetched");
-
-  h.advance(PRICE_TTL_MS - 1);
-  h.controller.requestCompleted();
-  await tick();
-  assert.equal(h.fetches(), 1, "still inside the price TTL");
-
-  h.advance(1);
-  h.controller.requestCompleted();
-  await tick();
-  assert.equal(h.fetches(), 2, "refreshed exactly at the price TTL");
 });
 
-test("a failed price refresh keeps the last value and backs off", async () => {
-  let failing = false;
-  const h = buildPriceController({
-    fetch: async () => {
-      if (failing) throw new Error("network down");
-      return { input: 9.2773, output: 164.4076 };
-    },
-  });
-  h.controller.activate();
-  await tick();
-  assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (9.28 in / 164.41 out ₽/1M)");
-
-  failing = true;
-  h.advance(PRICE_TTL_MS);
-  h.controller.requestCompleted();
-  await tick();
-  assert.equal(h.controller.priceSnapshot?.state, "stale");
-  assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (9.28 in / 164.41 out ₽/1M)", "value survives the failure");
-  const attempts = h.fetches();
-
-  // Loader-style churn must not hammer a failing endpoint.
-  for (let i = 0; i < 5; i += 1) {
-    h.controller.requestCompleted();
-    await tick();
-  }
-  assert.equal(h.fetches(), attempts, "no retry inside the backoff window");
-
-  h.advance(PRICE_RETRY_MS);
-  h.controller.requestCompleted();
-  await tick();
-  assert.equal(h.fetches(), attempts + 1, "retried after the backoff window");
-
-  failing = false;
-  h.advance(PRICE_RETRY_MS);
-  h.controller.requestCompleted();
-  await tick();
-  assert.equal(h.controller.priceSnapshot?.state, "fresh");
-});
-
-test("switching models never paints the previous model's price", async () => {
+test("switching models shows the new model's registry price immediately", async () => {
   let current = "z-ai/glm-5.3";
-  let resolvePending!: (value: ModelPrice | null) => void;
   const statuses: Array<string | undefined> = [];
   let now = 1_000_000;
   const controller = new PolzaStatusController({
@@ -231,33 +176,17 @@ test("switching models never paints the previous model's price", async () => {
     fetchBalance: async () => balance(43.5),
     getSessionCost: () => ({ requests: 1, costRub: 0.61 }),
     getActiveModelId: () => current,
-    // Only the second model is in the registry, so the first one needs a live request.
     getCatalogPrice: (modelId) =>
-      modelId === "anthropic/claude-haiku-5.5" ? { input: 11.7434, output: 58.717 } : null,
-    fetchPrice: (modelId) =>
-      modelId === "z-ai/glm-5.3"
-        ? new Promise((resolve) => {
-            resolvePending = resolve;
-          })
-        : Promise.resolve({ input: 11.7434, output: 58.717 }),
+      modelId === "z-ai/glm-5.3" ? { input: 9.277286, output: 164.4076 } : { input: 11.7434, output: 58.717 },
     now: () => now,
   });
 
   controller.activate();
   await tick();
-  assert.equal(statuses.at(-1), "Polza 43.50 ₽ | Spent 0.61 ₽", "nothing is invented while the price is unknown");
+  assert.match(statuses.at(-1) ?? "", /\(9\.28 in \/ 164\.41 out ₽\/1M\)/);
 
   current = "anthropic/claude-haiku-5.5";
   controller.modelChanged();
-  assert.match(
-    statuses.at(-1) ?? "",
-    /\(11\.74 in \/ 58\.72 out ₽\/1M\)/,
-    "registry price of the new model, immediately",
-  );
-
-  // A late answer for a model that is no longer selected must be ignored.
-  resolvePending({ input: 999, output: 999 });
-  await tick();
   assert.match(statuses.at(-1) ?? "", /\(11\.74 in \/ 58\.72 out ₽\/1M\)/);
 });
 
