@@ -9,7 +9,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { splitStatusLine, type WidthMeasure } from "./align.ts";
 import type { PolzaBalance } from "./balance.ts";
-import type { ModelPrice } from "./model-price.ts";
+import type { PolzaPricingRUB } from "./metadata/types.ts";
 
 /** Minimal theme surface the footer needs (keeps this module free of TUI internals). */
 export type StatusTheme = Pick<Theme, "fg" | "bold">;
@@ -65,7 +65,8 @@ export type PriceState = "fresh" | "unknown";
 export interface PriceSnapshot {
   /** Model the price belongs to; a snapshot for another model must never be rendered. */
   modelId: string;
-  price: ModelPrice | null;
+  /** The catalog record itself (`ResolvedModel.pricing.polzaRUB`) — no copies, no re-parsing. */
+  price: PolzaPricingRUB | null;
   fetchedAt: number;
   state: PriceState;
 }
@@ -107,8 +108,8 @@ export interface PolzaStatusModel {
  */
 function priceCell(snapshot: PriceSnapshot | null | undefined): { input: string; output: string } | null {
   if (!snapshot || !snapshot.price) return null;
-  const input = formatPricePerMillion(snapshot.price.input);
-  const output = formatPricePerMillion(snapshot.price.output);
+  const input = formatPricePerMillion(snapshot.price.promptPerMillion);
+  const output = formatPricePerMillion(snapshot.price.completionPerMillion);
   if (input === null || output === null) return null;
   return { input, output };
 }
@@ -200,10 +201,10 @@ export interface StatusControllerDeps {
   /** Model currently selected in Pi, or null when it is not a Polza model. */
   getActiveModelId?: () => string | null;
   /**
-   * Price of a model from the in-memory catalog registry — the very same `pricing.polzaRUB` that
-   * `/polza-model-info` prints. No request is made for it.
+   * The model's catalog pricing record — the very same `ResolvedModel.pricing.polzaRUB` that
+   * `/polza-model-info` prints. No request is made for it and nothing is copied.
    */
-  getCatalogPrice?: (modelId: string) => ModelPrice | null;
+  getModelPricing?: (modelId: string) => PolzaPricingRUB | null;
   ttlMs?: number;
   now?: () => number;
 }
@@ -338,7 +339,7 @@ export class PolzaStatusController {
     }
     if (!force && this.price?.modelId === modelId) return;
 
-    const catalog = this.deps.getCatalogPrice?.(modelId) ?? null;
+    const catalog = this.deps.getModelPricing?.(modelId) ?? null;
     this.price = catalog
       ? { modelId, price: catalog, fetchedAt: this.now(), state: "fresh" }
       : { modelId, price: null, fetchedAt: 0, state: "unknown" };

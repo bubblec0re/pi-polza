@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PolzaBalance } from "../.pi/extensions/pi-polza/balance.ts";
-import type { ModelPrice } from "../.pi/extensions/pi-polza/model-price.ts";
+import type { PolzaPricingRUB } from "../.pi/extensions/pi-polza/metadata/types.ts";
 import { PAD_UNIT, RIGHT_ALIGN_RESERVE } from "../.pi/extensions/pi-polza/align.ts";
 import {
   PLAIN_STATUS_THEME,
@@ -26,13 +26,24 @@ function snap(value: number | null, state: BalanceSnapshot["state"]): BalanceSna
   return { value, state, fetchedAt: 0 };
 }
 
+/** Catalog pricing record, exactly the shape the registry holds. */
+function pricing(input: number | null, output: number | null): PolzaPricingRUB {
+  return {
+    currency: "RUB",
+    promptPerMillion: input,
+    completionPerMillion: output,
+    cacheReadPerMillion: null,
+    cacheWritePerMillion: null,
+  };
+}
+
 function priceSnap(
   input: number | null,
   output: number | null,
   state: PriceSnapshot["state"] = "fresh",
   modelId = "z-ai/glm-5.3",
 ): PriceSnapshot {
-  return { modelId, price: { input, output }, fetchedAt: 0, state };
+  return { modelId, price: pricing(input, output), fetchedAt: 0, state };
 }
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -111,7 +122,7 @@ interface PriceHarness {
 }
 
 function buildPriceController(
-  opts: { catalog?: (modelId: string) => ModelPrice | null; modelId?: () => string | null } = {},
+  opts: { catalog?: (modelId: string) => PolzaPricingRUB | null; modelId?: () => string | null } = {},
 ): PriceHarness {
   const statuses: Array<string | undefined> = [];
   let now = 1_000_000;
@@ -120,7 +131,7 @@ function buildPriceController(
     fetchBalance: async () => balance(43.5),
     getSessionCost: () => ({ requests: 1, costRub: 0.61 }),
     getActiveModelId: opts.modelId ?? (() => "z-ai/glm-5.3"),
-    getCatalogPrice: (modelId) => (opts.catalog ? opts.catalog(modelId) : { input: 9.277286, output: 164.4076 }),
+    getModelPricing: (modelId) => (opts.catalog ? opts.catalog(modelId) : pricing(9.277286, 164.4076)),
     now: () => now,
   });
   return {
@@ -156,13 +167,13 @@ test("a model outside the catalog has no price segment", async () => {
 });
 
 test("the catalog rebuild re-reads prices, including for a model that had none", async () => {
-  let price: ModelPrice | null = null;
+  let price: PolzaPricingRUB | null = null;
   const h = buildPriceController({ catalog: () => price });
   h.controller.activate();
   await tick();
   assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽", "not in the catalog yet");
 
-  price = { input: 44.0378, output: 220.1887 };
+  price = pricing(44.0378, 220.1887);
   h.controller.catalogUpdated();
   assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (44.04 in / 220.19 out ₽/1M)");
 });
@@ -176,8 +187,8 @@ test("switching models shows the new model's registry price immediately", async 
     fetchBalance: async () => balance(43.5),
     getSessionCost: () => ({ requests: 1, costRub: 0.61 }),
     getActiveModelId: () => current,
-    getCatalogPrice: (modelId) =>
-      modelId === "z-ai/glm-5.3" ? { input: 9.277286, output: 164.4076 } : { input: 11.7434, output: 58.717 },
+    getModelPricing: (modelId) =>
+      modelId === "z-ai/glm-5.3" ? pricing(9.277286, 164.4076) : pricing(11.7434, 58.717),
     now: () => now,
   });
 

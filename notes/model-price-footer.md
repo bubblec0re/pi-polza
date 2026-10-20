@@ -24,9 +24,10 @@
 Футер и `/polza-model-info` читают **одно и то же поле**:
 
 * `/polza-model-info` → `modelInfoPanel()` → `model.pricing.polzaRUB` (`presentation.ts`);
-* футер → `priceFromRegistry()` (`model-price.ts`) → `ResolvedModel.pricing.polzaRUB` того же реестра.
+* футер → `getModelPricing()` (`index.ts`) → `registry.find(...).pricing.polzaRUB` — та же запись без копирования.
 
-Один источник, поэтому цифры не могут разойтись. Отдельного запроса за ценой нет: реестр
+Один источник и одна запись (`PolzaPricingRUB`, `metadata/types.ts`): футер её только читает, ничего
+не парсит и не копирует. Поэтому цифры не могут разойтись. Отдельного запроса за ценой нет: реестр
 заполняется каталогом (`buildPolzaCatalog()` → `GET /api/v1/models/catalog`), который загружается
 при старте Pi и по `/polza-refresh`; после перестройки каталога футер перечитывает цену без сети
 (`catalogUpdated()`).

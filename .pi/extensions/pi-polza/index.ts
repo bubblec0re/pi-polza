@@ -20,7 +20,6 @@ import { hasPolzaApiKey, loadDotEnv } from "./env.ts";
 import { POLZA_API_V1, setRuntimePolzaApiKey } from "./http.ts";
 import { importChildAccounting } from "./integrations/child-import.ts";
 import { createSubagentsBridge } from "./integrations/subagents.ts";
-import { priceFromRegistry } from "./model-price.ts";
 import { buildPolzaCatalog, POLZA_PROVIDER_ID, toPiModels, type CatalogBuildResult, type OpenRouterMode } from "./provider.ts";
 import type { ResolvedModel } from "./metadata/types.ts";
 import {
@@ -99,8 +98,8 @@ export default async function piPolza(pi: ExtensionAPI): Promise<void> {
       return { requests: summary.requests, costRub: summary.actualCostRub, unpricedRequests: summary.unpricedRequests };
     },
     getActiveModelId: () => (activeCtx?.model?.provider === POLZA_PROVIDER_ID ? activeCtx.model.id : null),
-    // Same source as `/polza-model-info`: the catalog registry, no request.
-    getCatalogPrice: (modelId) => priceFromRegistry(registry, modelId),
+    // Same source as `/polza-model-info`: the registry record, no request, no copy.
+    getModelPricing: (modelId) => registry.find((entry) => entry.id === modelId)?.pricing.polzaRUB ?? null,
   });
 
   // Right alignment is width-dependent: repaint when the terminal is resized (pi-tui listens to the
