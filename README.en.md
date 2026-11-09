@@ -179,8 +179,8 @@ users or peers, even when they share the same Polza account; external API client
 outside `pi-polza`. Foreign spend is never converted to RUB and **never shown as `0 ₽`** — it is
 simply excluded from the report.
 
-**Where to look.** Pi's footer (`Polza <balance> ₽ | Spent <cost> ₽` on the left, `(X in / Y out ₽/1M)`
-on the right) and `/polza-cost`.
+**Where to look.** Pi's footer (`Polza <balance> ₽ | Spent <cost> ₽ | <model>: in X ₽ / 1M · out
+Y ₽ / 1M`, all left-aligned) and `/polza-cost`.
 `/polza-balance` shows the **whole account wallet**, not session cost: the balance also moves
 because of other sessions and applications, so its delta is not a measure of one run.
 
@@ -198,23 +198,25 @@ unknown and never becomes `0 ₽`.
 
 ## Selected model price in the footer
 
-The right-hand side of the footer shows the model's reference price from the Polza catalog — the same
-number the website shows — in RUB per million tokens:
+After the balance and the spend, the footer shows the selected model's name and its reference price
+from the Polza catalog — the same number the website shows — in RUB per million tokens:
 
 ```text
-Polza 43.54 ₽ | Spent 0.61 ₽                        (in 11.74 ₽ / 1M · out 58.72 ₽ / 1M)
+Polza 43.54 ₽ | Spent 0.61 ₽ | deepseek/deepseek-r1: in 11.74 ₽ / 1M · out 58.72 ₽ / 1M
 ```
 
-* Account balance and session spend stay on the left, the model price sits on the right; `in` is
-  input, `out` is output.
+* Everything is on one left-aligned line: the balance and the spend, then the model name and its
+  price; `in` is input, `out` is output.
 * The value comes from the same catalog `/polza-model-info` prints: it is fetched at every Pi start and
   by `/polza-refresh`. No extra request is made for the price.
 * It is a reference for choosing a model, not a per-request calculation: actual billing is `Spent`
   (and `/polza-cost`), which uses `usage.cost_rub` from Polza.
-* When no price exists (model outside the catalog) the segment is omitted — a zero is never invented.
-* Numbers are formatted by the same helper the `/polza-model-info` panel uses; the footer rounds to two
-  decimals like the balance and the spend do, while the command shows the published precision. Cache
-  pricing and the full breakdown stay in `/polza-model-info`.
+* The model name is always shown when a model is selected; the price is shown only when it is known.
+  When no price exists (model outside the catalog) only the name is shown — a zero is never invented.
+* The line is left-aligned and Pi owns the width: on a narrow terminal Pi truncates the tail (the
+  price first). Numbers are formatted by the same helper the `/polza-model-info` panel uses; the
+  footer rounds to two decimals like the balance and the spend do, while the command shows the
+  published precision. Cache pricing and the full breakdown stay in `/polza-model-info`.
 
 ## Commands
 

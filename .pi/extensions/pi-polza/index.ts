@@ -12,7 +12,6 @@
 import { createProvider, type Model } from "@earendil-works/pi-ai";
 import { readStoredCredential, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { PolzaCostAccumulator, recordsFromEntries } from "./accounting.ts";
-import { resolveColumns, type WidthMeasure } from "./align.ts";
 import { polzaApiKeyAuth, resolvePolzaKey } from "./auth.ts";
 import { fetchBalance } from "./balance.ts";
 import { registerPolzaCommands } from "./commands.ts";
@@ -27,21 +26,8 @@ import {
   POLZA_STATUS_KEY,
   renderPolzaStatus,
   type PolzaStatusModel,
-  type StatusLayout,
 } from "./status.ts";
 import { createPolzaApiStreams } from "./stream.ts";
-
-/**
- * Footer alignment. Pi renders extension statuses left-aligned and has no alignment API, so `right`
- * pushes the Polza line to the same edge Pi aligns its model name to (plain space padding, measured
- * with pi-tui's own helpers). Flip to "left" to restore the previous look. See notes/model-price-footer.md.
- */
-const STATUS_ALIGNMENT: "left" | "right" = "right";
-
-const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
-
-/** Fallback width measure: correct for the footer's own text (ASCII + `₽`) until pi-tui is loaded. */
-const plainWidth: WidthMeasure = (text) => text.replace(ANSI_PATTERN, "").length;
 
 interface SessionStartContextLike {
   sessionManager: { getEntries(): Iterable<unknown> };
@@ -55,30 +41,12 @@ export default async function piPolza(pi: ExtensionAPI): Promise<void> {
   let lastBuild: CatalogBuildResult | null = null;
   const accounting = new PolzaCostAccumulator();
   let activeCtx: ExtensionContext | null = null;
-  // Same measurement Pi uses when it truncates the status line.
-  let measureWidth: WidthMeasure = plainWidth;
-  void import("@earendil-works/pi-tui")
-    .then((tui) => {
-      if (typeof tui.visibleWidth === "function") measureWidth = tui.visibleWidth;
-    })
-    .catch(() => {
-      // Keep the plain fallback; alignment stays approximately correct.
-    });
 
   /**
-   * Persistent footer, rendered by Pi's native status bar: `Polza <balance> ₽ | Spent <cost> ₽` on the
-   * left, the selected model's catalog price on the right edge. Both halves are one status string, so
-   * the gap between them is what places the price — see align.ts.
+   * Persistent footer, rendered by Pi's native status bar: `Polza <balance> ₽ | Spent <cost> ₽ | <model>:
+   * in X ₽ / 1M · out Y ₽ / 1M`, all left-aligned on one line. Pi owns the width — if the line does not
+   * fit, it truncates the tail. See notes/model-price-footer.md.
    */
-  const statusLayout = (): StatusLayout | undefined => {
-    if (STATUS_ALIGNMENT !== "right") return undefined;
-    try {
-      return { columns: resolveColumns(process.stdout, process.env), measure: measureWidth };
-    } catch {
-      return undefined;
-    }
-  };
-
   const status = new PolzaStatusController({
     setStatus: (model: PolzaStatusModel | undefined) => {
       try {
@@ -87,7 +55,7 @@ export default async function piPolza(pi: ExtensionAPI): Promise<void> {
           ctx?.ui.setStatus(POLZA_STATUS_KEY, undefined);
           return;
         }
-        ctx.ui.setStatus(POLZA_STATUS_KEY, renderPolzaStatus(ctx.ui.theme, model, statusLayout()));
+        ctx.ui.setStatus(POLZA_STATUS_KEY, renderPolzaStatus(ctx.ui.theme, model));
       } catch {
         // Status bar is best-effort; never break the runtime.
       }
@@ -101,11 +69,6 @@ export default async function piPolza(pi: ExtensionAPI): Promise<void> {
     // Same source as `/polza-model-info`: the registry record, no request, no copy.
     getModelPricing: (modelId) => registry.find((entry) => entry.id === modelId)?.pricing.polzaRUB ?? null,
   });
-
-  // Right alignment is width-dependent: repaint when the terminal is resized (pi-tui listens to the
-  // same event, so no extra machinery is involved).
-  const onResize = (): void => status.refresh();
-  if (STATUS_ALIGNMENT === "right") process.stdout.on("resize", onResize);
 
   /** Ask Pi for the resolved Polza credential so non-stream HTTP paths share it. */
   const installCredentialFromRegistry = async (ctx: ExtensionContext): Promise<void> => {
@@ -187,7 +150,6 @@ export default async function piPolza(pi: ExtensionAPI): Promise<void> {
 
   pi.on("session_shutdown", () => {
     subagentsBridge.dispose();
-    process.stdout.off("resize", onResize);
     status.deactivate();
   });
 

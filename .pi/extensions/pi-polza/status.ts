@@ -1,13 +1,13 @@
 /**
  * Persistent Polza footer/status bar (framework-agnostic core).
  *
- * Renders `Polza <balance> ₽ | Spent <cost> ₽ | (X in / Y out ₽/1M)` via Pi's native
- * `ctx.ui.setStatus`. Balance comes from `/api/v2/balance`; Spent is the sum of authoritative
- * `usage.cost_rub`; the price is the catalog reference rate of the selected model.
- * The three are independent: a failing endpoint never hides the other values.
+ * Renders `Polza <balance> ₽ | Spent <cost> ₽ | <model>: in X ₽ / 1M · out Y ₽ / 1M` via Pi's
+ * native `ctx.ui.setStatus`, all left-aligned on one line. Balance comes from `/api/v2/balance`;
+ * Spent is the sum of authoritative `usage.cost_rub`; the price is the catalog reference rate of
+ * the selected model, shown next to its name. The three are independent: a failing endpoint never
+ * hides the other values. Pi owns the width — if the line does not fit, it truncates the tail.
  */
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { splitStatusLine, type WidthMeasure } from "./align.ts";
 import type { PolzaBalance } from "./balance.ts";
 import type { PolzaPricingRUB } from "./metadata/types.ts";
 import { rubPerMillion } from "./presentation.ts";
@@ -74,8 +74,9 @@ export function formatBalanceStatus(
   balance: BalanceSnapshot,
   session: SessionCost,
   price: PriceSnapshot | null = null,
+  modelId: string | null = null,
 ): string {
-  return renderPolzaStatus(PLAIN_STATUS_THEME, polzaStatusModel(balance, session, price));
+  return renderPolzaStatus(PLAIN_STATUS_THEME, polzaStatusModel(balance, session, price, modelId));
 }
 
 /** Structured footer content, so the caller can theme it without parsing a string. */
@@ -85,7 +86,9 @@ export interface PolzaStatusModel {
   balanceState: BalanceState;
   /** True when some requests had no authoritative cost, so the spend is a partial subtotal. */
   partial: boolean;
-  /** Catalog price of the selected model, already formatted; null = unknown (segment omitted). */
+  /** The selected model's id (e.g. `deepseek/deepseek-r1`), shown before the price. */
+  modelId: string | null;
+  /** Catalog price of the selected model, already formatted; null = unknown (price omitted). */
   price: { input: string; output: string } | null;
   priceState: PriceState;
 }
@@ -112,12 +115,14 @@ export function polzaStatusModel(
   balance: BalanceSnapshot,
   session: SessionCost,
   price: PriceSnapshot | null = null,
+  modelId: string | null = null,
 ): PolzaStatusModel {
   return {
     balance: balanceCell(balance),
     session: sessionCell(session),
     balanceState: balance.state,
     partial: (session.unpricedRequests ?? 0) > 0,
+    modelId,
     price: priceCell(price),
     priceState: price?.state ?? "unknown",
   };
@@ -135,14 +140,6 @@ export const PLAIN_STATUS_THEME: StatusTheme = {
  * The `partial` marker is a warning too: a subtotal that excludes unmeasured spend must not read as
  * a final number.
  */
-/** How to place the two halves of the line. Without it the halves are simply joined by ` | `. */
-export interface StatusLayout {
-  /** Usable width of the status line (terminal columns). */
-  columns: number;
-  /** ANSI-aware width measurement (`visibleWidth` in the runtime, plain length in tests). */
-  measure: WidthMeasure;
-}
-
 /**
  * Left half: `Polza <balance> ₽ | Spent <cost> ₽`. Account state and what this session actually cost —
  * the numbers that must stay readable at a glance.
@@ -163,29 +160,32 @@ export function renderStatusAccount(theme: StatusTheme, model: PolzaStatusModel)
   ].join("");
 }
 
-/** Right half: `(in 11.74 ₽ / 1M · out 58.72 ₽ / 1M)`, or null when the price is unknown. */
+/**
+ * Right half: `<model>: in 11.74 ₽ / 1M · out 58.72 ₽ / 1M`. The model name is always shown when a
+ * model is selected; the price is appended only when it is known (a one-sided or missing price is
+ * omitted, never filled with zero).
+ */
 export function renderStatusPrice(theme: StatusTheme, model: PolzaStatusModel): string | null {
-  if (!model.price) return null;
+  if (!model.modelId) return null;
+  if (!model.price) return theme.fg("muted", model.modelId);
   return [
-    theme.fg("muted", "("),
+    theme.fg("muted", model.modelId),
+    theme.fg("muted", ": "),
     theme.fg("muted", "in "),
     theme.fg("text", model.price.input),
     theme.fg("muted", " · out "),
     theme.fg("text", model.price.output),
-    theme.fg("muted", ")"),
   ].join("");
 }
 
 /**
- * One status string: account and spend on the left, the model's catalog price on the right edge.
- * With a layout the halves are separated by a gap that survives Pi's status sanitizer; without one
- * (tests, plain-text callers) they are joined by ` | `.
+ * One left-aligned status string: account and spend, then the selected model's name and its catalog
+ * price. Pi owns the width — if the line does not fit, it truncates the tail (Pi's problem, not ours).
  */
-export function renderPolzaStatus(theme: StatusTheme, model: PolzaStatusModel, layout?: StatusLayout): string {
+export function renderPolzaStatus(theme: StatusTheme, model: PolzaStatusModel): string {
   const left = renderStatusAccount(theme, model);
   const price = renderStatusPrice(theme, model);
   if (!price) return left;
-  if (layout) return splitStatusLine(left, price, layout.columns, layout.measure);
   return `${left}${theme.fg("dim", " | ")}${price}`;
 }
 
@@ -274,7 +274,7 @@ export class PolzaStatusController {
     this.render();
   }
 
-  /** Re-render with the current state (e.g. terminal resize changed the usable width). */
+  /** Re-render with the current state (e.g. after a balance or session-cost change). */
   refresh(): void {
     this.render();
   }
@@ -348,6 +348,6 @@ export class PolzaStatusController {
     }
     const modelId = this.currentModelId();
     const price = modelId !== null && this.price?.modelId === modelId ? this.price : null;
-    this.deps.setStatus(polzaStatusModel(this.balance, this.deps.getSessionCost(), price));
+    this.deps.setStatus(polzaStatusModel(this.balance, this.deps.getSessionCost(), price, modelId));
   }
 }
