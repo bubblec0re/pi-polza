@@ -2,14 +2,25 @@
  * Mapper: ResolvedModel → Pi ProviderModelConfig.
  *
  * Rules (ТЗ v2 §5, §10, §11, §14):
- *  - Only eligible models are projected, and NEVER with placeholder values.
+ *  - Only eligible models are projected.
+ *  - An UNKNOWN output limit is bounded by the context window instead of hiding the model: no answer
+ *    can be longer than the context, so this is a physical ceiling, not a fabricated placeholder.
+ *    Pi additionally clamps each request to the free room left by the prompt.
+ *  - Unknown input modalities on a chat-completions model are offered as `text`: unknown is not a
+ *    confirmed negative, and text is the only input Pi can send for a model whose modalities are
+ *    not published.
  *  - Pi native input is limited to `text`/`image`. audio/video/file stay in internal metadata.
  *  - `cost` MUST be USD / 1M tokens in Pi. Polza prices are RUB, so they are NEVER written there.
  *    The safe technical representation is zeros; actual billed cost is `usage.cost_rub` (native
  *    RUB) and catalog RUB prices live in the internal registry / `/polza-model-info`.
  *  - `reasoning` is only true when metadata declares it.
+ *  - `thinkingLevelMap` is written only when the catalog declares either a published effort
+ *    allow-list or the `reasoning_effort` control; see `metadata/thinking-levels.ts`. It describes
+ *    what Polza DECLARES, not verified level control, so it is omitted (never `undefined`) when there
+ *    is nothing to declare.
  */
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import { resolveThinkingLevelMap } from "./metadata/thinking-levels.ts";
 import type { ResolvedModel } from "./metadata/types.ts";
 
 export type PiInputModality = "text" | "image";
@@ -39,9 +50,21 @@ export function toProviderModelConfig(model: ResolvedModel): ProviderModelConfig
   if (!model.piEligibility.eligible) return null;
 
   const contextWindow = model.limits.contextWindow.value;
-  const maxTokens = model.limits.maxCompletionTokens.value;
-  const input = mapInputModalitiesToPi(model.modalities.input.value);
-  if (contextWindow === null || maxTokens === null || input === null) return null;
+  if (contextWindow === null) return null;
+
+  // Unknown output limit -> the context window is the ceiling (see the header rules).
+  const reportedMax = model.limits.maxCompletionTokens.value;
+  const maxTokens = reportedMax === null ? contextWindow : reportedMax;
+  // Unknown modalities -> text only; a known non-text input was already rejected by eligibility.
+  const input = mapInputModalitiesToPi(model.modalities.input.value) ?? ["text"];
+
+  // Declared-only mapping: a non-reasoning model or an empty catalog declaration yields no field.
+  const thinkingLevelMap = resolveThinkingLevelMap({
+    reasoning: model.capabilities.reasoning.value === true,
+    controlDeclared:
+      model.raw.polza.top_provider?.supported_parameters?.includes("reasoning_effort") ?? false,
+    supportedEfforts: model.supportedThinkingEfforts,
+  });
 
   return {
     id: model.id,
@@ -52,6 +75,7 @@ export function toProviderModelConfig(model: ResolvedModel): ProviderModelConfig
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow,
     maxTokens,
+    ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
   };
 }
 

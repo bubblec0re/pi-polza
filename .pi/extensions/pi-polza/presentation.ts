@@ -10,6 +10,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { summarizeRecords, type PolzaUsageRecord } from "./accounting.ts";
 import { formatRub, type PolzaBalance } from "./balance.ts";
 import { extractInternalCapabilities } from "./mapper.ts";
+import { PI_THINKING_LEVELS, resolveThinkingLevelMap } from "./metadata/thinking-levels.ts";
 import { overridesFor } from "./overrides/models.ts";
 import { describeReasoning, reasoningVerificationFor } from "./reasoning.ts";
 import type { ResolvedModel } from "./metadata/types.ts";
@@ -119,6 +120,29 @@ function rubOrUnknown(value: number | null): string {
   return value === null ? "unknown" : formatRub(value);
 }
 
+/**
+ * The reasoning levels Pi will offer, as declared by the catalog — never a guess. `unknown` when the
+ * catalog declares no effort control at all. `xhigh`/`max` are listed only because of an explicit
+ * catalog entry, so they carry that note.
+ */
+function catalogLevelsRow(model: ResolvedModel): PanelRow {
+  const map = resolveThinkingLevelMap({
+    reasoning: model.capabilities.reasoning.value === true,
+    controlDeclared:
+      model.raw.polza.top_provider?.supported_parameters?.includes("reasoning_effort") ?? false,
+    supportedEfforts: model.supportedThinkingEfforts,
+  });
+  if (!map) return { label: "Catalog levels", value: "unknown", role: "unknown" };
+  const levels = PI_THINKING_LEVELS.filter((level) => map[level] !== null);
+  const extended = levels.some((level) => level === "xhigh" || level === "max");
+  return {
+    label: "Catalog levels",
+    value: levels.length > 0 ? levels.join(", ") : "none",
+    role: "value",
+    hint: extended ? "xhigh/max only via an explicit catalog entry" : undefined,
+  };
+}
+
 /** `/polza-model-info` — grouped, human-readable, facts unchanged. */
 export function modelInfoPanel(model: ResolvedModel): Panel {
   const caps = extractInternalCapabilities(model);
@@ -140,7 +164,10 @@ export function modelInfoPanel(model: ResolvedModel): Panel {
         { label: "Context", value: show(model.limits.contextWindow.value), hint: model.limits.contextWindow.source },
         {
           label: "Max output",
-          value: show(model.limits.maxCompletionTokens.value),
+          value:
+            model.limits.maxCompletionTokens.value === null
+              ? "unknown (bounded by context)"
+              : show(model.limits.maxCompletionTokens.value),
           hint: model.limits.maxCompletionTokens.source,
         },
       ],
@@ -163,6 +190,7 @@ export function modelInfoPanel(model: ResolvedModel): Panel {
           value: verification.levelControlVerified === true ? "verified" : "not verified",
           role: verification.levelControlVerified === true ? "success" : "unknown",
         },
+        catalogLevelsRow(model),
         {
           label: "Observed reasoning",
           value: reasoningObserved
@@ -285,7 +313,16 @@ function isForeignProvider(record: PolzaUsageRecord): boolean {
  * The report deliberately does not guess foreground per-agent attribution: those requests are
  * captured into the root session without any agent identity, so they are reported together.
  */
-export function costPanel(records: readonly PolzaUsageRecord[]): Panel {
+export interface CostPanelOptions {
+  /**
+   * Whether background-subagent spend can be imported at all. `"absent"` means pi-subagents is not
+   * installed, `"inactive"` means it is installed but the completion handshake did not happen — in
+   * both cases background spend is missing from the numbers above and the panel must say so.
+   */
+  backgroundImport?: "active" | "inactive" | "absent";
+}
+
+export function costPanel(records: readonly PolzaUsageRecord[], options: CostPanelOptions = {}): Panel {
   if (records.length === 0) {
     return {
       title: "Polza — Current Session",
@@ -374,6 +411,8 @@ export function costPanel(records: readonly PolzaUsageRecord[]): Panel {
   }
 
   const partial = summary.unpricedRequests > 0;
+  const backgroundImport = options.backgroundImport ?? "absent";
+  const backgroundTracked = backgroundImport === "active";
   sections.push({
     title: "Coverage",
     rows: [
@@ -384,11 +423,25 @@ export function costPanel(records: readonly PolzaUsageRecord[]): Panel {
       },
       {
         label: "Completeness",
-        value: partial ? "partial" : "complete",
-        role: partial ? "warning" : "success",
+        value: partial ? "partial" : backgroundTracked ? "complete" : "partial — background subagents not tracked",
+        role: partial || !backgroundTracked ? "warning" : "success",
+      },
+      {
+        label: "Background import",
+        value:
+          backgroundImport === "active"
+            ? "connected (pi-subagents RPC)"
+            : backgroundImport === "inactive"
+              ? "not connected — background spend is missing"
+              : "pi-subagents not installed — background spend is missing",
+        role: backgroundTracked ? "success" : "warning",
       },
     ],
-    note: partial ? "Some requests carry no authoritative cost_rub; the subtotal above is partial." : undefined,
+    note: partial
+      ? "Some requests carry no authoritative cost_rub; the subtotal above is partial."
+      : backgroundTracked
+        ? undefined
+        : "Background subagent runs are billed in their own session and are not imported, so the total excludes them.",
   });
 
   if (foreign.length > 0) {

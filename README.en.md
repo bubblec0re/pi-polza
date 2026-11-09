@@ -34,11 +34,18 @@ models exist, what their limits are, or what a request actually cost. This plugi
 - Streaming responses and tool calling
 - Four slash commands for inspecting models, cost and balance
 
+The reasoning level is picked with Pi's own controls — `/thinking` in a session or `--thinking` at
+startup. `xhigh` and `max` are available only on models where the Polza catalog declares reasoning
+levels (a published allow-list or a declared `reasoning_effort`); for the rest the set stays within
+`off…high`.
+
 ## Installation
 
-Requires [Pi Agent](https://pi.dev) and Node.js ≥ 22.6. The provider does not require Python.
+Requires [Pi Agent](https://pi.dev) ≥ 1.0.2 (< 2.0.0), Node.js ≥ 22.19.0, and Git for GitHub installation. Other packages in a build may require a newer Node. The provider needs no Python. For ready-made Code/Task profiles use the [build installer](https://github.com/VladimirMonin/pi-agent-build/blob/main/INSTALL_FOR_AGENTS.md), not a local checkout override of its pin.
 
-### Compatibility
+### Historically verified compatibility
+
+**pi-polza 0.2.2 + Pi Agent 1.4.0:** Windows checks exercised the real lifecycle with synthetic HTTP: persisted login → cold start without env/cache → catalog before main-model selection, restart, and material failures. This is not live Polza or fresh visual TUI acceptance. The minimum API version does not qualify every intermediate release.
 
 **pi-polza 0.2.1 + Pi Agent 1.3.0** were checked on **Windows / Node.js 25.8.1**:
 the unchanged provider code ran with Pi's real native transport and synthetic SSE responses.
@@ -57,10 +64,10 @@ Compatibility with every 1.x version, every model, or a full live workflow is no
 pi install https://github.com/VladimirMonin/pi-polza
 ```
 
-Pin a release if you prefer:
+For a fixed source, substitute an **already published** tag or commit:
 
 ```bash
-pi install https://github.com/VladimirMonin/pi-polza@v0.2.1
+pi install "https://github.com/VladimirMonin/pi-polza@v0.3.1"
 ```
 
 Verify it is installed:
@@ -86,7 +93,9 @@ Start Pi and run `/login`:
 The key is stored by Pi itself (the same place as every other provider) and is used for the model
 catalog, chat requests and balance lookups. No `.env` file is needed.
 
-> If the model list looks empty after login, run `/polza-refresh` to reload the catalog.
+> The main `polza` catalog must be available before a working request. If it is empty, `/polza-refresh` helps diagnosis but does not establish a successful cold start. Distinguish missing/rejected credentials, network failure, and an unavailable model ID; do not make `.env` mandatory instead of checking native auth.
+
+Select a model with `/model` and inspect `/polza-model-info`: the provider must be **`polza`**. A separate `polza-memory` route in some builds serves consolidation; memory embeddings and session-search are configured independently. A successful service-model response does not establish main-agent readiness. [Install and cold-start checks (Russian)](instructions/manual-testing.md).
 
 ### Advanced: environment / headless / CI
 
@@ -117,10 +126,7 @@ A stored Pi credential always wins; the environment is only consulted when nothi
 
 ## Models
 
-The catalog is fetched from Polza at startup and cached. Around **285 models** are selectable for
-chat, out of ~398 catalog entries; the rest are filtered out because they are not usable chat
-models or because their limits cannot be determined reliably (see
-[Known limitations](#known-limitations)).
+The catalog is fetched dynamically from Polza; metadata enrichment is cached. The selectable chat-model count changes: non-chat entries and models without reliably known mandatory limits are filtered out (see [Known limitations](#known-limitations)). A fixed count is not a readiness criterion.
 
 `/polza-refresh` reloads the catalog and the OpenRouter enrichment without restarting Pi.
 
@@ -214,7 +220,7 @@ Polza 43.54 ₽ | Spent 0.61 ₽                        (in 11.74 ₽ / 1M · ou
 
 | Command | Description |
 | --- | --- |
-| `/polza-model-info` | Capabilities, limits, pricing and metadata sources for the current model |
+| `/polza-model-info` | Capabilities, limits, pricing, metadata sources and catalog reasoning levels (`Catalog levels` row) for the current model |
 | `/polza-cost` | Actual Polza cost: main session, foreground and completed background subagents |
 | `/polza-balance` | Polza account balance (native RUB) and footer refresh |
 | `/polza-refresh` | Reload the Polza catalog and OpenRouter enrichment now |
@@ -263,6 +269,9 @@ Because of this, fields can read `unknown` or `not verified`. That means **there
 confirmation**, not that the plugin failed. The plugin never invents capabilities to fill a gap:
 an absent value stays `unknown`, never `0`.
 
+The `Catalog levels` row in `/polza-model-info` lists the levels Pi will offer for the current model
+according to the catalog; it reads `unknown` when the catalog declares no reasoning levels.
+
 <details>
 <summary>Screenshot: metadata detail</summary>
 
@@ -283,8 +292,13 @@ treated strictly as enrichment:
 
 ## Known limitations
 
-- Reasoning *levels* (`minimal`/`low`/`medium`/`high`/…) are not verified for every model family;
-  the panel reports `not verified` where we have no reproducible evidence.
+- Reasoning *levels* come from the catalog, not from guesses: a published allow-list
+  (`top_provider.reasoning.supported_efforts`) exists for 85 of 300 chat models and `xhigh` is
+  declared for 44 of them; `reasoning_effort` is declared for 187 of 300. Levels absent from a
+  published list are hidden, and `xhigh`/`max` appear only where the catalog declares reasoning
+  levels; with no list but a declared `reasoning_effort`, Pi level names pass through unchanged and
+  `off` is hidden. Whether the selected level changes a live request is not verified, so the panel
+  still reports `not verified` where we have no reproducible evidence.
 - Some Polza-exclusive models are omitted when mandatory Pi model limits cannot be determined
   reliably — better absent than wrong.
 - Catalog metadata and the actually billed cost can differ. Billing always follows `usage.cost_rub`.
@@ -297,16 +311,13 @@ treated strictly as enrichment:
 
 ## Updating
 
-```bash
-pi update --extensions          # update all installed packages
-pi update --extension pi-polza  # update just this one (npm installs)
-```
-
-Git installs pinned to a tag only move when you install the new ref:
+For a floating Git source, Pi uses `pi update <source>` (check `pi update --help` for your version). Tag/commit-pinned installs move to an explicitly selected **published ref**:
 
 ```bash
-pi install https://github.com/VladimirMonin/pi-polza@v0.2.1
+pi install "https://github.com/VladimirMonin/pi-polza@v0.3.1"
 ```
+
+A local `pi install "<REPO_ROOT>"` reads the working tree; it does not prove GitHub delivery. Do not load local and Git copies together. In an accepted build, its installer updates the provider from the manifest, not an unpinned bulk update. [Source differences (Russian)](instructions/manual-testing.md).
 
 ## Uninstalling
 
@@ -329,6 +340,8 @@ npm run probe:startup
 npm run audit:secrets
 ```
 
+Start a small fix with affected checks. A full offline suite belongs at the agreed release boundary or a broad-impact change; a live experiment resolves material external-contract uncertainty. Check TUI behavior when an interactive path changes, not after every link edit. Reuse applicable previous results with their original version and scope.
+
 Repository layout:
 
 - `.pi/extensions/pi-polza/` — the extension: runtime code and shared modules
@@ -345,6 +358,11 @@ Repository layout:
 - `.env` is git-ignored; `.env.example` shows the expected shape.
 - The plugin stores no credential of its own — it uses Pi's native credential store.
 - `npm run audit:secrets` scans the working tree and Git history for leaked secrets.
+
+## Related projects
+
+- [Pi Agent Build](https://github.com/VladimirMonin/pi-agent-build) — a version-pinned Code/Task build with an installer and guarded patches; its manifests/release notes own versions and acceptance.
+- [Project Foundation Kit](https://github.com/VladimirMonin/Project-Foundation-Kit) — portable engineering methods, instructions, and templates. Adopt the full `pack/` separately; the provider does not install it automatically.
 
 ## License
 

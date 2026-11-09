@@ -141,7 +141,7 @@ function buildPriceController(
 test("a registry price renders immediately and is never re-requested", async () => {
   const h = buildPriceController();
   h.controller.activate();
-  assert.equal(h.last(), "Polza ? | Spent 0.61 ₽ | (in 9.28 ₽ / 1M · out 164.41 ₽ / 1M)");
+  assert.equal(h.last(), "Polza ? ₽ | Spent 0.61 ₽ | (in 9.28 ₽ / 1M · out 164.41 ₽ / 1M)");
   await tick();
   assert.equal(h.last(), "Polza 43.50 ₽ | Spent 0.61 ₽ | (in 9.28 ₽ / 1M · out 164.41 ₽ / 1M)");
   assert.equal(h.controller.priceSnapshot?.state, "fresh");

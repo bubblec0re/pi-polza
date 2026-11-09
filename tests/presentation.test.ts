@@ -97,6 +97,33 @@ test("modelInfoPanel describes reasoning observation in human terms", () => {
   assert.match(plain(unverified), /Observed reasoning\s+none/);
 });
 
+test("modelInfoPanel lists the catalog levels and marks xhigh as explicit-only", () => {
+  const plain = (m: ReturnType<typeof resolveModel>): string =>
+    renderPanel({ fg: (_c, t) => t, bold: (t) => t }, modelInfoPanel(m)).join("\n");
+
+  // Published allow-list: hidden levels (minimal/max) are omitted, xhigh is offered by the list.
+  const declared = resolveModel(
+    polzaModel({
+      id: "vendor/reasoner",
+      contextLength: 1000,
+      maxCompletionTokens: 100,
+      supportedParameters: ["reasoning", "reasoning_effort"],
+      supportedEfforts: ["none", "low", "medium", "high", "xhigh"],
+    }),
+    null,
+  );
+  const text = plain(declared);
+  assert.match(text, /Catalog levels\s+off, low, medium, high, xhigh/);
+  assert.match(text, /xhigh\/max only via an explicit catalog entry/);
+
+  // No declared effort control: unknown, never a guessed list.
+  const undeclared = resolveModel(
+    polzaModel({ id: "vendor/no-effort", contextLength: 1000, maxCompletionTokens: 100 }),
+    null,
+  );
+  assert.match(plain(undeclared), /Catalog levels\s+unknown/);
+});
+
 test("balancePanel makes the available balance the accent headline", () => {
   const { theme, calls } = recordingTheme();
   renderPanel(
@@ -182,13 +209,27 @@ test("costPanel marks coverage partial when a request carried no cost", () => {
   assert.match(text, /partial/);
 });
 
-test("costPanel reports complete coverage when every request is priced", () => {
-  const text = plainText([
+test("costPanel reports complete coverage only when background import is connected", () => {
+  const records = [
     recordFromUsage("qwen/qwen3.5-9b", { prompt_tokens: 10, completion_tokens: 1, cost_rub: 0.01 }, 1),
-  ]);
-  assert.match(text, /1 priced requests; 0 unpriced/);
-  assert.match(text, /complete/);
-  assert.doesNotMatch(text, /partial/);
+  ];
+  const plain = (backgroundImport: "active" | "inactive" | "absent"): string =>
+    renderPanel(
+      { fg: (_c, t) => t, bold: (t) => t },
+      costPanel(records, { backgroundImport }),
+    ).join("\n");
+
+  const active = plain("active");
+  assert.match(active, /1 priced requests; 0 unpriced/);
+  assert.match(active, /complete/);
+  assert.doesNotMatch(active, /partial/);
+
+  // Without the import, the total provably excludes background child spend: never claim complete.
+  for (const state of ["inactive", "absent"] as const) {
+    const text = plain(state);
+    assert.match(text, /background subagents not tracked/);
+    assert.match(text, /Background subagent runs are billed in their own session/);
+  }
 });
 
 test("costPanel states that foreground per-agent attribution is unavailable", () => {

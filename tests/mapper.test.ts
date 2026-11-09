@@ -56,10 +56,12 @@ test("ineligible model maps to null", () => {
   assert.equal(toProviderModelConfig(resolved), null);
 });
 
-test("model without max output after enrichment maps to null (no placeholder)", () => {
+test("model without max output is offered, bounded by its context window", () => {
   const resolved = resolveModel(polzaModel({ id: "sber/gigachat", contextLength: 32000, maxCompletionTokens: null }), null);
-  assert.equal(resolved.limits.maxCompletionTokens.value, null);
-  assert.equal(toProviderModelConfig(resolved), null);
+  assert.equal(resolved.limits.maxCompletionTokens.value, null, "metadata stays unknown");
+  const config = toProviderModelConfig(resolved);
+  assert.equal(config?.maxTokens, 32000, "unknown output limit is bounded by the context window");
+  assert.deepEqual(config?.input, ["text"]);
 });
 
 test("mapInputModalitiesToPi returns null when nothing is mappable", () => {
@@ -79,4 +81,49 @@ test("toProviderModelConfigs filters ineligible models", () => {
 test("reasoning is only true when declared", () => {
   const noReasoning = resolveModel(polzaModel({ id: "a/plain", contextLength: 1000, maxCompletionTokens: 100, supportedParameters: ["max_tokens"] }), null);
   assert.equal(toProviderModelConfig(noReasoning)?.reasoning, false);
+});
+
+test("declared reasoning_effort produces a thinkingLevelMap that offers xhigh", () => {
+  const resolved = resolveModel(
+    polzaModel({
+      id: "a/reasoner",
+      contextLength: 1000,
+      maxCompletionTokens: 100,
+      supportedParameters: ["reasoning", "reasoning_effort"],
+    }),
+    null,
+  );
+  const config = toProviderModelConfig(resolved);
+  assert.ok(config);
+  assert.equal(config.thinkingLevelMap?.xhigh, "xhigh");
+  assert.equal(config.thinkingLevelMap?.max, "max");
+  assert.equal(config.thinkingLevelMap?.off, null);
+});
+
+test("published supported_efforts without xhigh hides xhigh in the map", () => {
+  const resolved = resolveModel(
+    polzaModel({
+      id: "a/reasoner-listed",
+      contextLength: 1000,
+      maxCompletionTokens: 100,
+      supportedParameters: ["reasoning", "reasoning_effort"],
+      supportedEfforts: ["none", "low", "medium", "high"],
+    }),
+    null,
+  );
+  const config = toProviderModelConfig(resolved);
+  assert.ok(config);
+  assert.equal(config.thinkingLevelMap?.high, "high");
+  assert.equal(config.thinkingLevelMap?.xhigh, null);
+});
+
+test("a non-reasoning model has no thinkingLevelMap field at all", () => {
+  const resolved = resolveModel(
+    polzaModel({ id: "a/plain-effort", contextLength: 1000, maxCompletionTokens: 100, supportedParameters: ["max_tokens"] }),
+    null,
+  );
+  const config = toProviderModelConfig(resolved);
+  assert.ok(config);
+  assert.equal(config.thinkingLevelMap, undefined);
+  assert.ok(!("thinkingLevelMap" in config), "the field is absent, not written as undefined");
 });
